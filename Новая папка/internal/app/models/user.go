@@ -4,6 +4,7 @@ import (
 	validation "github.com/go-ozzo/ozzo-validation"
 	"github.com/go-ozzo/ozzo-validation/is"
 	"golang.org/x/crypto/bcrypt"
+	"database/sql"
 )
 
 //User ...
@@ -17,6 +18,7 @@ type User struct {
 	PhoneNumber       int    `json:"phonenumber,omitempty"`
 	EncryptedPassword string `json:"-"`
 }
+
 
 //Validate ...
 func (u *User) Validate() error {
@@ -62,4 +64,15 @@ func encryptString(s string) (string, error) {
 	}
 
 	return string(b), nil
+}
+
+//UserDecode exists to avoid sql null errors
+type UserDecode struct {
+	UserID            int32  `json:"userid"`
+	UserName          sql.NullString `json:"username,omitempty"`
+	FirstName         sql.NullString `json:"firstname,omitempty"`
+	LastName          sql.NullString `json:"lastname,omitempty"`
+	Email             string `json:"email"`
+	PhoneNumber       sql.NullInt64    `json:"phonenumber,omitempty"`
+	EncryptedPassword string `json:"-"`
 }

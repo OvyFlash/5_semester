@@ -1,21 +1,23 @@
 package sqlstore
 
 import (
-	"database/sql"
-
-	_ "github.com/go-sql-driver/mysql" //mysql driver
+	"sync"
 )
 
 //Store ...
 type Store struct {
-	db         *sql.DB
+	mu *sync.Mutex
+	//db         *sql.DB
 	repository *Repository
+	db	string
+
 }
 
 //NewStore return instance of store
-func NewStore(db *sql.DB) *Store {
+func NewStore(databaseName string) *Store {
 	return &Store{
-		db: db,
+		mu: &sync.Mutex{},
+		db: databaseName,
 	}
 }
 

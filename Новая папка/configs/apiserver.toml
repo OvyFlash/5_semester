@@ -1,0 +1,5 @@
+bind_addr = ":8080"
+log_level = "debug"
+#database_url = "root:1_QwertY_2@/Social_Network"
+database_url = "Neckname.db"
+session_key = "xq&=XsQO~rK8%_(Tn{@y%gouCYYEY}^#Lg>#]G]H76$p|w:%3r]RQ>E@A~;VZC4"

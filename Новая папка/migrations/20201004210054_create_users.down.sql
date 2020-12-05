@@ -1,0 +1,7 @@
+DROP TABLE Users;
+DROP TABLE Followers;
+DROP TABLE Comments;
+DROP TABLE Posts;
+DROP TABLE Routes;
+DROP TABLE Points;
+DROP TABLE RouteStats;
