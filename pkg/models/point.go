@@ -2,11 +2,11 @@ package models
 
 //Point ...
 type Point struct {
-	ID            	  int64  `json:"pointid,omitempty"`
-	RouteID           int64  `json:"routeid,omitempty"`
-	Latitude          string    `json:"latitude"`
-	Longitude         string `json:"longitude"`
-	PointIndex		  int32  `json:"pointindex,omitempty"`
+	ID         int64  `json:"pointid,omitempty"`
+	RouteID    int64  `json:"routeid,omitempty"`
+	Latitude   string `json:"lat"`
+	Longitude  string `json:"lon"`
+	PointIndex int32  `json:"pointindex,omitempty"`
 }
 
 // //PointDecode user for decoding

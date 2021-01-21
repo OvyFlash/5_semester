@@ -30,6 +30,7 @@ func MakeSqldatabase(config *config.Config) *Sqldatabase {
 		db:   db,
 		name: config.DatabaseURL,
 	}
+	//db.Close()
 	return mydb
 }
 
@@ -107,7 +108,6 @@ func (mydb *Sqldatabase) GetUserByID(userID int32) (*models.User, error) {
 	if u.PhoneNumber.Valid {
 		user.PhoneNumber = int(u.PhoneNumber.Int32)
 	}
-
 	return user, nil
 }
 
@@ -161,7 +161,7 @@ func (mydb *Sqldatabase) UpdateUser(u *models.User) error {
 	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Users(userid INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, firstname TEXT NOT NULL, lastname TEXT, email TEXT NOT NULL UNIQUE, encrypted_password TEXT NOT NULL, phone_number INTEGER)"); err != nil {
 		return err
 	}
-
+	u.EncryptPassword()
 	if _, err := mydb.db.Exec("UPDATE Users SET username = ?, firstname = ?, lastname = ?, email = ?, encrypted_password = ?, phone_number = ? WHERE userid = ?",
 		u.UserName,
 		u.FirstName,
@@ -174,6 +174,23 @@ func (mydb *Sqldatabase) UpdateUser(u *models.User) error {
 		return err
 	}
 	return nil
+}
+
+//CheckUserEmail checks if user with such email presents
+func (mydb *Sqldatabase) CheckUserEmail(email string) error {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Users(userid INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, firstname TEXT NOT NULL, lastname TEXT, email TEXT NOT NULL UNIQUE, encrypted_password TEXT NOT NULL, phone_number INTEGER)"); err != nil {
+		return err
+	}
+
+	var id int32
+	if err := mydb.db.QueryRow("SELECT userid FROM Users WHERE email = ?",
+		email).Scan(&id); err != nil {
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return err
+	}
+	return errors.New("User with such email already exists")
 }
 
 //DeleteUser ...
@@ -191,38 +208,18 @@ func (mydb *Sqldatabase) DeleteUser(userID int32) error {
 	return nil
 }
 
-// //FollowUser ...
-// func (mydb *Sqldatabase) FollowUser(u *models.User) (error) {
-
-// 	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Followers(id INTEGER PRIMARY KEY AUTOINCREMENT, userid INTEGER NOT NULL, followed_userid INTEGER NOT NULL)"); err != nil {
-// 		return err
-// 	}
-
-// 	count := 0
-// 	if _, err := mydb.db.Exec("SELECT * FROM Followers WHERE userid = ? AND followed_userid = ?",
-// 			userID,
-// 		); err != nil {
-// 			return err
-// 		}
-
-// 	if _, err := mydb.db.Exec("INSERT INTO Followers(userid, followed_userid) VALUES(?, ?)",
-// 			userID,
-// 		); err != nil {
-// 			return err
-// 		}
-// 	return nil
-// }
-
 //CreateRoute ...
-func (mydb *Sqldatabase) CreateRoute(u *models.User) (*models.Route, error) {
-	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Route(routeid INTEGER PRIMARY KEY AUTOINCREMENT, userid INTEGER NOT NULL, date INTEGER NOT NULL"); err != nil {
+func (mydb *Sqldatabase) CreateRoute(u *models.User, route *models.Route) (*models.Route, error) {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Route(routeid INTEGER PRIMARY KEY AUTOINCREMENT, userid INTEGER NOT NULL, date INTEGER NOT NULL, start INTEGER NOT NULL, finish INTEGER NOT NULL)"); err != nil {
 		return nil, err
 	}
 
 	date := time.Now().Unix()
-	result, err := mydb.db.Exec("INSERT INTO Route(userid, date) VALUES(?, ?)",
+	result, err := mydb.db.Exec("INSERT INTO Route(userid, date, start, finish) VALUES(?, ?, ?, ?)",
 		u.UserID,
-		date)
+		date,
+		route.Start,
+		route.Finish)
 	if err != nil {
 		return nil, err
 	}
@@ -231,24 +228,47 @@ func (mydb *Sqldatabase) CreateRoute(u *models.User) (*models.Route, error) {
 	if err != nil {
 		return nil, err
 	}
-	route := &models.Route{
-		RouteID: ID,
-		UserID:  u.UserID,
-		Date:    date,
+
+	route.RouteID = ID
+	route.UserID = u.UserID
+	route.Date = date
+
+	if err := mydb.AddPoints(route); err != nil {
+		return nil, err
 	}
 
+	route.Points = nil
 	return route, nil
+}
+
+//AddPoints ...
+func (mydb *Sqldatabase) AddPoints(route *models.Route) error {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Points(id INTEGER PRIMARY KEY AUTOINCREMENT, routeid INTEGER NOT NULL, latitude TEXT NOT NULL, longitude TEXT NOT NULL, pointindex INT NOT NULL)"); err != nil {
+		return err
+	}
+	for i, point := range route.Points {
+		if _, err := mydb.db.Exec("INSERT INTO Points(routeid, latitude, longitude, pointindex) VALUES(?, ?, ?, ?)",
+			route.RouteID, point.Latitude, point.Longitude, i+1); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 //GetRouteByID ...
 func (mydb *Sqldatabase) GetRouteByID(routeid int64) (*models.Route, error) {
-	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Route(routeid INTEGER PRIMARY KEY AUTOINCREMENT, userid INTEGER NOT NULL, date INTEGER NOT NULL"); err != nil {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Route(routeid INTEGER PRIMARY KEY AUTOINCREMENT, userid INTEGER NOT NULL, date INTEGER NOT NULL, start INTEGER NOT NULL, finish INTEGER NOT NULL)"); err != nil {
 		return nil, err
 	}
 
 	route := &models.Route{}
 	err := mydb.db.QueryRow("SELECT * FROM Route WHERE routeid = ?",
-		routeid).Scan(&route.RouteID, &route.UserID, &route.Date)
+		routeid).Scan(&route.RouteID, &route.UserID, &route.Date, &route.Start, &route.Finish)
+	if err != nil {
+		return nil, err
+	}
+	route.Points, err = mydb.GetPointsByRouteID(routeid)
 	if err != nil {
 		return nil, err
 	}
@@ -256,108 +276,67 @@ func (mydb *Sqldatabase) GetRouteByID(routeid int64) (*models.Route, error) {
 	return route, nil
 }
 
-// //GetRouteByID ...
-// func (mydb *Sqldatabase) GetRouteByID(routeid int64) (*models.Route, error) {
-// 	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Route(routeid INTEGER PRIMARY KEY AUTOINCREMENT, userid INTEGER NOT NULL, date INTEGER NOT NULL"); err != nil {
-// 		return nil, err
-// 	}
-
-// 	route := &models.Route{}
-// 	err := mydb.db.QueryRow("SELECT * FROM Route WHERE routeid = ?",
-// 		routeid).Scan(&route.RouteID, &route.UserID, &route.Date)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	return route, nil
-// }
-
-/*//Point ...
-type Point struct {
-	ID            	  int64  `json:"pointid,omitempty"`
-	RouteID           int64  `json:"routeid,omitempty"`
-	Latitude          string    `json:"latitude"`
-	Longitude         string `json:"longitude"`
-	PointIndex		  int32  `json:"pointindex,omitempty"`
-}*/
-
-//AddPoint ...
-func (mydb *Sqldatabase) AddPoint(point *models.Point) error {
-	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Points(id INTEGER PRIMARY KEY AUTOINCREMENT, routeid INTEGER NOT NULL, latitude TEXT NOT NULL, longitude TEXT NOT NULL, pointindex INT NOT NULL)"); err != nil {
-		return err
+//GetUserRoutes ...
+func (mydb *Sqldatabase) GetUserRoutes(userID int32) ([]*models.Route, error) {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Route(routeid INTEGER PRIMARY KEY AUTOINCREMENT, userid INTEGER NOT NULL, date INTEGER NOT NULL, start INTEGER NOT NULL, finish INTEGER NOT NULL)"); err != nil {
+		return nil, err
 	}
 
-	count := 0
-	err := mydb.db.QueryRow("SELECT COUNT(*) FROM Points WHERE routeid = ?",
-		point.RouteID).Scan(&count)
+	rows, err := mydb.db.Query("SELECT * FROM Route WHERE userid = ?",
+		userID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if _, err = mydb.db.Exec("INSERT INTO Points(routeid, latitude, longitude, pointindex) VALUES(?, ?, ?, ?)",
-		point.RouteID, point.Latitude, point.Longitude, count); err != nil {
-		return err
+	defer rows.Close()
+	var routes []*models.Route
+
+	for rows.Next() {
+		route := &models.Route{}
+		rows.Scan(&route.RouteID, &route.UserID, &route.Date, &route.Start, &route.Finish)
+		if err != nil {
+			return nil, err
+		}
+		route.Points, err = mydb.GetPointsByRouteID(route.RouteID)
+		if err != nil {
+			return nil, err
+		}
+		routes = append(routes, route)
 	}
-	return nil
+
+	return routes, nil
 }
 
-//FinishRoute ...
-func (mydb *Sqldatabase) FinishRoute(point *models.Point, userID int32) (*models.RouteStat, error) {
+//GetPointsByRouteID ...
+func (mydb *Sqldatabase) GetPointsByRouteID(routeID int64) ([]*models.Point, error) {
 	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Points(id INTEGER PRIMARY KEY AUTOINCREMENT, routeid INTEGER NOT NULL, latitude TEXT NOT NULL, longitude TEXT NOT NULL, pointindex INT NOT NULL)"); err != nil {
 		return nil, err
 	}
-	count := 0
-	err := mydb.db.QueryRow("SELECT COUNT(*) FROM Points WHERE routeid = ?",
-		point.RouteID).Scan(&count)
+	rows, err := mydb.db.Query("SELECT * FROM Points WHERE routeid = ?", routeID)
 	if err != nil {
 		return nil, err
 	}
-	if _, err = mydb.db.Exec("INSERT INTO Points(routeid, latitude, longitude, pointindex) VALUES(?, ?, ?, ?)",
-		point.RouteID, point.Latitude, point.Longitude, count); err != nil {
-		return nil, err
+	defer rows.Close()
+
+	var points []*models.Point
+	for rows.Next() {
+		point := &models.Point{}
+		err := rows.Scan(
+			&point.ID,
+			&point.RouteID,
+			&point.Latitude,
+			&point.Longitude,
+			&point.PointIndex)
+		if err != nil {
+			return nil, err
+		}
+		points = append(points, point)
 	}
 
-	/*
-	type RouteStat struct {
-	ID          int64 `json:"routeStat,omitempty"`
-	RouteID     int64 `json:"routeid,omitempty"`
-	UserID      int32 `json:"userid,omitempty"`
-	Workouttime
-	Date        int64 `json:"date,omitempty"`
-	}
-	*/
-	//creating routestats
-	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS RouteStats(id INTEGER PRIMARY KEY AUTOINCREMENT, routeid INTEGER NOT NULL, userid INTEGER NOT NULL, workouttime INTEGER NOT NULL, date INTEGER NOT NULL)"); err != nil {
-		return nil, err
-	}
-
-	route, err := mydb.GetRouteByID(point.RouteID)
-	if err != nil {
-		return nil, err
-	}
-
-	now := time.Now()
-	workouttime := now.Sub(time.Unix(route.Date, 0))
-
-	result, err := mydb.db.Exec("INSERT INTO RouteStats(routeid, userid, workouttime, date) VALUES(?, ?, ?, ?)",
-		point.RouteID, userID, workouttime, now)
-	if err != nil {
-		return nil, err
-	}
-
-	ID, err := result.LastInsertId()
-	if err != nil {
-		return nil, err
-	} 
-	routestat, err := mydb.GetRouteStatByRouteID(ID)
-	if err != nil {
-		return nil, err
-	}
-
-	return routestat, nil
+	return points, err
 }
 
 //GetRouteStatByRouteID ...
-func(mydb *Sqldatabase)GetRouteStatByRouteID(id int64) (*models.RouteStat, error){
+func (mydb *Sqldatabase) GetRouteStatByRouteID(id int64) (*models.RouteStat, error) {
 	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS RouteStats(id INTEGER PRIMARY KEY AUTOINCREMENT, routeid INTEGER NOT NULL, userid INTEGER NOT NULL, workouttime INTEGER NOT NULL, date INTEGER NOT NULL)"); err != nil {
 		return nil, err
 	}
@@ -373,4 +352,285 @@ func(mydb *Sqldatabase)GetRouteStatByRouteID(id int64) (*models.RouteStat, error
 		return nil, err
 	}
 	return routestat, nil
+}
+
+//FollowUser ...
+func (mydb *Sqldatabase) FollowUser(followed *models.User, follower *models.User) error {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Followers(id INTEGER PRIMARY KEY AUTOINCREMENT, userid INTEGER NOT NULL, follower_userid INTEGER NOT NULL)"); err != nil {
+		return err
+	}
+	count := 0
+	if err := mydb.db.QueryRow("SELECT COUNT(*) FROM Followers WHERE userid = ? AND follower_userid = ?").Scan(
+		&count,
+	); err != nil {
+		return err
+	}
+
+	if count > 0 {
+		return errors.New("User already following")
+	}
+
+	_, err := mydb.db.Exec("INSERT INTO Followers(userid, follower_userid) VALUES(?, ?)", followed.UserID, follower.UserID)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+//UnfollowUser ...
+func (mydb *Sqldatabase) UnfollowUser(followed *models.User, follower *models.User) error {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Followers(id INTEGER PRIMARY KEY AUTOINCREMENT, userid INTEGER NOT NULL, follower_userid INTEGER NOT NULL)"); err != nil {
+		return err
+	}
+	count := 0
+	if err := mydb.db.QueryRow("SELECT COUNT(*) FROM Followers WHERE userid = ? AND follower_userid = ?").Scan(
+		&count,
+	); err != nil {
+		return err
+	}
+
+	if count == 0 {
+		return errors.New("User is not following")
+	}
+
+	_, err := mydb.db.Exec("DELETE FROM Followers where userid = ? AND follower_userid = ?", followed.UserID, follower.UserID)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+//CreatePost ...
+func (mydb *Sqldatabase) CreatePost(post *models.Post, userID int32) (*models.Post, error) {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Posts(id INTEGER PRIMARY KEY AUTOINCREMENT, routeid INTEGER NOT NULL, date INTEGER NOT NULL, post_text TEXT)"); err != nil {
+		return nil, err
+	}
+
+	date := time.Now().Unix()
+	post.Date = date
+	result, err := mydb.db.Exec("INSERT INTO Posts(routeid, date, post_text) VALUES(?, ?, ?)",
+		post.RouteID, post.Date, post.Text)
+	if err != nil {
+		return nil, err
+	}
+	post.Route, err = mydb.GetRouteByID(post.RouteID)
+	if err != nil {
+		return nil, err
+	}
+	post.PostID, _ = result.LastInsertId()
+	return post, nil
+}
+
+//UpdatePost ...
+func (mydb *Sqldatabase) UpdatePost(post *models.Post, userID int32) (*models.Post, error) {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Posts(id INTEGER PRIMARY KEY AUTOINCREMENT, routeid INTEGER NOT NULL, date INTEGER NOT NULL, post_text TEXT)"); err != nil {
+		return nil, err
+	}
+
+	var userid int32 = 0
+	postDecode := &models.PostDecode{}
+	err := mydb.db.QueryRow("SELECT Posts.id, Posts.routeid, Posts.date, Posts.post_text, Route.userid FROM Posts JOIN Route ON Route.routeid = Posts.routeid WHERE Posts.id = ?", post.PostID).Scan(
+		&postDecode.PostID,
+		&postDecode.RouteID,
+		&postDecode.Date,
+		&postDecode.Text,
+		&userid)
+	if err != nil {
+		return nil, err
+	}
+	if userid != userID {
+		return nil, errors.New("You cant edit this post")
+	}
+
+	post.RouteID = postDecode.RouteID
+	post.Date = postDecode.Date
+	post.PostID = postDecode.PostID
+	if postDecode.Text.Valid {
+		if post.Text == "" && post.Text != postDecode.Text.String {
+			post.Text = postDecode.Text.String
+		}
+	}
+	if _, err := mydb.db.Exec("UPDATE Posts SET post_text = ? WHERE id = ?", post.Text, post.PostID); err != nil {
+		return nil, err
+	}
+
+	post.Route, err = mydb.GetRouteByID(post.RouteID)
+	if err != nil {
+		return nil, err
+	}
+
+	return post, nil
+}
+
+//DeletePost ...
+func (mydb *Sqldatabase) DeletePost(post *models.Post, userID int32) error {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Posts(id INTEGER PRIMARY KEY AUTOINCREMENT, routeid INTEGER NOT NULL, date INTEGER NOT NULL, post_text TEXT)"); err != nil {
+		return err
+	}
+
+	var userid int32 = 0
+	err := mydb.db.QueryRow("SELECT Route.userid FROM Posts JOIN Route ON Route.routeid = Posts.routeid WHERE Posts.id = ?", post.PostID).Scan(
+		&userid)
+	if err != nil {
+		return err
+	}
+	if userid != userID {
+		return errors.New("You cant delete this post")
+	}
+	if _, err := mydb.db.Exec("DELETE FROM Posts WHERE id = ?", post.PostID); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+//GetPost ...
+func (mydb *Sqldatabase) GetPost(post *models.Post) (*models.Post, error) {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Posts(id INTEGER PRIMARY KEY AUTOINCREMENT, routeid INTEGER NOT NULL, date INTEGER NOT NULL, post_text TEXT)"); err != nil {
+		return nil, err
+	}
+
+	postDecode := &models.PostDecode{}
+	err := mydb.db.QueryRow("SELECT * FROM Posts WHERE id = ?", post.PostID).Scan(
+		&postDecode.PostID,
+		&postDecode.RouteID,
+		&postDecode.Date,
+		&postDecode.Text)
+	if err != nil {
+		return nil, err
+	}
+
+	post.RouteID = postDecode.RouteID
+	post.Date = postDecode.Date
+	post.PostID = postDecode.PostID
+	if postDecode.Text.Valid {
+		post.Text = postDecode.Text.String
+
+	}
+
+	post.Route, err = mydb.GetRouteByID(post.RouteID)
+	if err != nil {
+		return nil, err
+	}
+
+	return post, nil
+}
+
+//AddComment ...
+func (mydb *Sqldatabase) AddComment(c *models.Comment) (*models.Comment, error) {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Comment(id INTEGER PRIMARY KEY AUTOINCREMENT, userid INTEGER NOT NULL, postid INTEGER NOT NULL, commentary TEXT NOT NULL)"); err != nil {
+		return nil, err
+	}
+
+	result, err := mydb.db.Exec("INSERT INTO Comment(userid, postid, commentary) VALUES(?, ?, ?)",
+		c.UserID, c.PostID, c.Commentary)
+	if err != nil {
+		return nil, err
+	}
+	c.CommentID, _ = result.LastInsertId()
+	return c, nil
+}
+
+//UpdateComment ...
+func (mydb *Sqldatabase) UpdateComment(c *models.Comment) (*models.Comment, error) {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Comment(id INTEGER PRIMARY KEY AUTOINCREMENT, userid INTEGER NOT NULL, postid INTEGER NOT NULL, commentary TEXT NOT NULL)"); err != nil {
+		return nil, err
+	}
+
+	_, err := mydb.db.Exec("UPDATE Comment SET commentary = ? WHERE postid = ? AND userid = ? AND id = ?", c.Commentary, c.PostID, c.UserID, c.CommentID)
+	if err != nil {
+		return nil, err
+	}
+
+	return c, nil
+}
+
+//DeleteComment ...
+func (mydb *Sqldatabase) DeleteComment(c *models.Comment) error {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Comment(id INTEGER PRIMARY KEY AUTOINCREMENT, userid INTEGER NOT NULL, postid INTEGER NOT NULL, commentary TEXT NOT NULL)"); err != nil {
+		return err
+	}
+
+	_, err := mydb.db.Exec("DELETE FROM Comment WHERE postid = ? AND userid = ? AND id = ?", c.PostID, c.UserID, c.CommentID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+//Like ...
+func (mydb *Sqldatabase) Like(l *models.Like) error {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Like(id INTEGER PRIMARY KEY AUTOINCREMENT, postid INTEGER NOT NULL, userid INTEGER NOT NULL)"); err != nil {
+		return err
+	}
+
+	count := 0
+	err := mydb.db.QueryRow("SELECT COUNT(*) FROM Like WHERE postid = ? AND userid = ?", l.PostID, l.UserID).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count != 0 {
+		return errors.New("Already liked")
+	}
+	_, err = mydb.db.Exec("INSERT INTO Like(postid, userid) VALUES(?, ?)", l.PostID, l.UserID)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+//RemoveLike ...
+func (mydb *Sqldatabase) RemoveLike(l *models.Like) error {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Like(id INTEGER PRIMARY KEY AUTOINCREMENT, postid INTEGER NOT NULL, userid INTEGER NOT NULL)"); err != nil {
+		return err
+	}
+
+	count := 0
+	err := mydb.db.QueryRow("SELECT COUNT(*) FROM Like WHERE postid = ? AND userid = ?", l.PostID, l.UserID).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return errors.New("Not liked")
+	}
+	_, err = mydb.db.Exec("DELETE FROM Like WHERE postid = ? AND userid = ?", l.PostID, l.UserID)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+//GetAllPosts ...
+func (mydb *Sqldatabase) GetAllPosts() ([]*models.Post, error) {
+	if _, err := mydb.db.Exec("CREATE TABLE IF NOT EXISTS Posts(id INTEGER PRIMARY KEY AUTOINCREMENT, routeid INTEGER NOT NULL, date INTEGER NOT NULL, post_text TEXT)"); err != nil {
+		return nil, err
+	}
+
+	rows, err := mydb.db.Query("SELECT * FROM Posts")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var posts []*models.Post
+	for rows.Next() {
+		postD := &models.PostDecode{}
+		err := rows.Scan(
+			&postD.PostID,
+			&postD.RouteID,
+			&postD.Date,
+			&postD.Text,
+		)
+		if err != nil {
+			return nil, err
+		}
+		p := postD.ToPost()
+		p.Route, err = mydb.GetRouteByID(p.RouteID)
+		if err != nil {
+			return nil, err
+		}
+		posts = append(posts, p)
+	}
+	return posts, nil
 }
